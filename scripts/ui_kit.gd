@@ -30,6 +30,7 @@ static func button(text: String, callback: Callable) -> Button:
 	b.text = text
 	b.custom_minimum_size = Vector2(320, 44)
 	b.add_theme_font_size_override("font_size", 20)
+	b.pressed.connect(func(): Audio.play_sfx("ui", 0.0))
 	b.pressed.connect(callback)
 	return b
 

@@ -49,6 +49,9 @@ func _ready() -> void:
 	enemies = Node2D.new()
 	graph.setup(params, GameState.night_seed())
 	RenderingServer.set_default_clear_color(graph.background)
+	Audio.play_music("final" if params.final else "night")
+	graph.stem_warning.connect(_on_stem_warning)
+	graph.sprouted.connect(_on_sprouted)
 	graph.core_revealed.connect(func(_p): hud.flash("Сердцевина проросла! Узел ждёт."))
 
 	add_child(enemies)
@@ -163,6 +166,17 @@ func _slow_motion(delta: float) -> void:
 	Engine.time_scale = move_toward(Engine.time_scale, target_scale, delta * 3.0)
 
 
+func _on_stem_warning(i: int) -> void:
+	var e: Dictionary = graph.edges[i]
+	if player and graph.node_pos(e.a).distance_to(player.position) < 700.0:
+		Audio.play_sfx("close", 0.1, 0.5)
+
+
+func _on_sprouted(pos: Vector2) -> void:
+	if player and pos.distance_to(player.position) < 600.0:
+		Audio.play_sfx("grow", 0.15, 0.3)
+
+
 func _on_choice(kind: String) -> void:
 	get_tree().paused = false
 	ended = true
@@ -240,6 +254,7 @@ func _on_cell_killed(_pos: Vector2) -> void:
 
 
 func player_attack(pos: Vector2, facing: Vector2) -> void:
+	Audio.play_sfx("hit")
 	for e in enemies.get_children():
 		var to: Vector2 = e.position - pos
 		var reach := attack_range + (30.0 if not e.has_signal("killed") else 0.0)
@@ -249,8 +264,11 @@ func player_attack(pos: Vector2, facing: Vector2) -> void:
 
 func player_prune(pos: Vector2) -> void:
 	var res: Dictionary = graph.use_secateur(pos, sap_collected)
+	Audio.play_sfx("cut")
 	if res.action == "none":
 		return
+	if res.action == "harvest":
+		Audio.play_sfx("pickup", 0.0)
 	sap_collected = maxi(0, sap_collected + int(res.get("sap", 0)))
 	seeds_collected += int(res.get("seeds", 0))
 	water_collected += int(res.get("water", 0))

@@ -57,6 +57,7 @@ func take_damage(amount: int, from: Vector2) -> void:
 		return
 	hp -= amount
 	_invuln = INVULN_TIME
+	Audio.play_sfx("hurt")
 	_knock = (position - from).normalized() * 380.0
 	if hp <= 0:
 		died.emit()

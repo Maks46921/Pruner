@@ -24,6 +24,7 @@ var selected := -1
 func _ready() -> void:
 	UI.fullscreen(self)
 	RenderingServer.set_default_clear_color(UI.BG_DAY)
+	Audio.play_music("day")
 
 	view = PlantView.new()
 	view.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -163,11 +164,13 @@ func _refresh() -> void:
 
 
 func _on_prune() -> void:
+	Audio.play_sfx("cut")
 	GameState.prune(selected)
 	_refresh()
 
 
 func _on_notch() -> void:
+	Audio.play_sfx("cut", 0.2)
 	GameState.notch(selected)
 	_refresh()
 
