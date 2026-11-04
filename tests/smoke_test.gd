@@ -42,6 +42,13 @@ func _process(_delta: float) -> bool:
 		gs.start_night()
 	var night = main.current
 	var is_night: bool = night != null and night.has_method("player_prune")
+	if is_night and night.hud.choice_box.visible:
+		print("FINAL CHOICE shown at t=%ds" % (frames / 60))
+		night.hud.choice_made.emit("graft")
+		return false
+	if gs.phase == "ending" and main.current and not main.current.has_method("player_prune"):
+		print("RESULT ending=%s nights_won=%d" % [gs.ending, gs.nights_won])
+		return true
 	if is_night and not night.ended:
 		_bot(night)
 	if is_night and frames % 1800 == 0:
@@ -68,7 +75,7 @@ func _process(_delta: float) -> bool:
 				if d < 150:
 					print("     e", i, " ", a, "->", b, " ", e.state, " grow=", e.grow, " d=", d)
 			print("     secateur would: ", g._nearest_edge(p.position + p.facing * 14.0, 42.0, true), " near=", g.edge_state_near(p.position))
-	if gs.day > start_day:
+	if gs.day > start_day or (start_day >= 7 and frames > 60 and gs.phase == "day" and gs.last_night_result != ""):
 		var used := 0.0
 		print("RESULT seed=%d watered=%s t=%ds: %s" % [seed_value, watered, frames / 60, gs.last_night_result])
 		return true

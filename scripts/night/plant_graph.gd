@@ -26,12 +26,12 @@ const WARN_TIME := 4.0
 const NOTCH_TIME := 20.0
 const GROW_SPEED := 1.1
 
-const C_STEM := Color(0.25, 0.50, 0.22)
-const C_STEM_IN := Color(0.36, 0.64, 0.30)
+var C_STEM := Color(0.25, 0.50, 0.22)
+var C_STEM_IN := Color(0.36, 0.64, 0.30)
 const C_NOTCH := Color(0.62, 0.80, 0.45)
 const C_WARN := Color(0.85, 0.22, 0.18)
-const C_CLOSED := Color(0.22, 0.13, 0.09)
-const C_BUD := Color(0.33, 0.62, 0.28)
+var C_CLOSED := Color(0.22, 0.13, 0.09)
+var C_BUD := Color(0.33, 0.62, 0.28)
 const C_ENTRY := Color(0.95, 0.88, 0.55)
 const C_CORE := Color(0.80, 0.12, 0.22)
 const C_SAP := Color(0.95, 0.62, 0.15)
@@ -58,6 +58,16 @@ var elapsed := 0.0
 var duration := 360.0
 
 var _leader_pending := false
+var leader_ticks := 18
+
+## Палитры ярусов: стебель, сердцевина стебля, почка, закрытый стебель, фон.
+const PALETTES := {
+	"soil": [Color(0.36, 0.42, 0.20), Color(0.48, 0.55, 0.28), Color(0.42, 0.50, 0.24), Color(0.20, 0.12, 0.07), Color(0.07, 0.05, 0.03)],
+	"bark": [Color(0.42, 0.36, 0.26), Color(0.55, 0.48, 0.34), Color(0.40, 0.48, 0.26), Color(0.18, 0.11, 0.08), Color(0.06, 0.05, 0.06)],
+	"crown": [Color(0.25, 0.55, 0.24), Color(0.38, 0.70, 0.32), Color(0.33, 0.65, 0.30), Color(0.20, 0.13, 0.10), Color(0.03, 0.05, 0.10)],
+	"heart": [Color(0.50, 0.20, 0.22), Color(0.68, 0.30, 0.30), Color(0.60, 0.25, 0.28), Color(0.15, 0.05, 0.06), Color(0.08, 0.02, 0.04)],
+}
+var background := Color(0.05, 0.04, 0.08)
 var _tick_acc := 0.0
 var _tick_count := 0
 var _time := 0.0
@@ -73,8 +83,34 @@ func setup(p: Dictionary, seed_value: int) -> void:
 	entry_index = _add_node(Vector2.ZERO, "entry", -1, 1.0)
 	core_pos = Vector2.from_angle(rng.randf_range(-PI, PI)) * float(p.core_distance)
 	leader = entry_index
-	for i in 3:
-		_grow_leader(true)
+	var pal: Array = PALETTES.get(p.get("tier", "crown"), PALETTES.crown)
+	C_STEM = pal[0]
+	C_STEM_IN = pal[1]
+	C_BUD = pal[2]
+	C_CLOSED = pal[3]
+	background = pal[4]
+	var avg_seg := (SEG_MIN + SEG_MAX) * 0.5
+	var segments := maxf(1.0, float(p.core_distance) / avg_seg - 3.0)
+	var core_at := float(p.get("core_at", 0.55))
+	if core_at <= 0.0:
+		# Финальная ночь: путь к сердцевине уже пророс.
+		var guard := 0
+		while core_index < 0 and guard < 60:
+			guard += 1
+			_grow_leader(true)
+		# Каждый четвёртый стебель пути уже зарос: без секатора не пройти.
+		var e: int = nodes[core_index].parent_edge
+		var k := 0
+		while e >= 0:
+			k += 1
+			if k % 4 == 0:
+				edges[e].state = "closed"
+			e = nodes[edges[e].a].parent_edge
+	else:
+		for i in 3:
+			_grow_leader(true)
+		var interval := maxf(2.5, core_at * duration / segments - TELEGRAPH_TIME)
+		leader_ticks = maxi(2, int(round(interval / TICK)))
 	var made := 0
 	var attempts := 0
 	while made < int(p.initial_branches) and attempts < 200:
@@ -244,7 +280,7 @@ func _physics_process(delta: float) -> void:
 
 func _tick() -> void:
 	_tick_count += 1
-	if _tick_count % int(params.leader_ticks) == 0:
+	if _tick_count % leader_ticks == 0:
 		_grow_leader(false)
 	if rng.randf() < float(params.branch_chance):
 		_schedule_branch(false)
@@ -408,6 +444,19 @@ func _notch_edge(i: int, night_sap: int) -> Dictionary:
 	if was == "warning":
 		return {"action": "notch", "text": "Надрез: стебель не зарастёт ещё 20 с"}
 	return {"action": "notch", "text": "Надрез: стебель защищён на 20 с"}
+
+
+## Есть ли рядом рост, который вот-вот изменит путь (для замедления времени).
+func danger_near(pos: Vector2, radius: float) -> bool:
+	for p in pending:
+		if p.t < 1.2 and Geometry2D.get_closest_point_to_segment(pos, nodes[p.from].pos, p.to).distance_to(pos) < radius:
+			return true
+	for e in edges:
+		if e.state == "warning" and e.warn_t < 1.5:
+			var pts := _edge_points(e)
+			if Geometry2D.get_closest_point_to_segment(pos, pts[0], pts[1]).distance_to(pos) < radius:
+				return true
+	return false
 
 
 ## Ближайший к точке закрытый или зарастающий стебель (для подсказок).
