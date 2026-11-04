@@ -12,6 +12,8 @@ const INVULN_TIME := 1.0
 var graph: Node2D
 var night: Node
 
+var speed_mult := 1.0
+var swing_radius := 46.0
 var max_hp := 5
 var hp := 5
 var facing := Vector2.RIGHT
@@ -29,7 +31,7 @@ func _physics_process(delta: float) -> void:
 	var input := Input.get_vector("move_left", "move_right", "move_up", "move_down")
 	if input.length() > 0.1:
 		facing = input.normalized()
-	var desired := position + input * SPEED * delta + _knock * delta
+	var desired := position + input * SPEED * speed_mult * delta + _knock * delta
 	_knock = _knock.move_toward(Vector2.ZERO, 1200.0 * delta)
 	position = graph.constrain(desired, RADIUS)
 
@@ -80,7 +82,7 @@ func _draw() -> void:
 	# Удар
 	if _swing_t > 0.0:
 		var a := facing.angle()
-		draw_arc(Vector2.ZERO, 46.0, a - 1.1, a + 1.1, 16, Color(1, 1, 1, _swing_t / 0.15), 5.0)
+		draw_arc(Vector2.ZERO, swing_radius, a - 1.1, a + 1.1, 16, Color(1, 1, 1, _swing_t / 0.15), 5.0)
 	# Секатор
 	if _cut_t > 0.0:
 		var p := facing * 22.0

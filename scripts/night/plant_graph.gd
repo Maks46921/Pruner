@@ -7,6 +7,10 @@ extends Node2D
 
 signal core_revealed(pos: Vector2)
 signal stem_warning(edge_index: int)
+signal room_grown(index: int, kind: String)
+
+## Шесть типов комнат ночи (плюс вход и сердцевина).
+const ROOM_KINDS := ["sap", "nest", "flower", "thorn", "seed", "water"]
 
 const TICK := 0.5
 const STEM_WIDTH := 36.0
@@ -33,6 +37,10 @@ const C_CORE := Color(0.80, 0.12, 0.22)
 const C_SAP := Color(0.95, 0.62, 0.15)
 const C_NEST := Color(0.70, 0.78, 0.95)
 const C_STUMP := Color(0.40, 0.33, 0.25)
+const C_FLOWER := Color(0.85, 0.22, 0.38)
+const C_THORN := Color(0.50, 0.33, 0.22)
+const C_SEED := Color(0.88, 0.82, 0.48)
+const C_WATER := Color(0.35, 0.65, 0.92)
 const C_TELEGRAPH := Color(0.70, 0.95, 0.55)
 const C_LEADER := Color(1.0, 0.85, 0.35)
 
@@ -79,7 +87,7 @@ func setup(p: Dictionary, seed_value: int) -> void:
 
 func _radius_for(kind: String) -> float:
 	match kind:
-		"entry", "sap", "nest":
+		"entry", "sap", "nest", "flower", "thorn", "seed", "water":
 			return ROOM_RADIUS
 		"core":
 			return CORE_RADIUS
@@ -158,18 +166,23 @@ func _schedule_branch(instant: bool, exclude_from: int = -1) -> bool:
 		var pos := origin + dir * rng.randf_range(SEG_MIN, SEG_MAX)
 		if not _is_free_spot(origin, pos):
 			continue
-		var roll := rng.randf()
-		var kind := "bud"
-		if roll < float(params.sap_room_chance):
-			kind = "sap"
-		elif roll < float(params.sap_room_chance) + float(params.nest_chance):
-			kind = "nest"
+		var kind := _roll_kind()
 		if instant:
 			_connect(from, pos, kind, true)
 		else:
 			pending.append({"from": from, "to": pos, "kind": kind, "t": TELEGRAPH_TIME, "leader": false})
 		return true
 	return false
+
+
+func _roll_kind() -> String:
+	var roll := rng.randf()
+	var acc := 0.0
+	for k in ROOM_KINDS:
+		acc += float(params.get(k + "_room_chance" if k != "nest" and k != "flower" else k + "_chance", 0.0))
+		if roll < acc:
+			return k
+	return "bud"
 
 
 func _is_free_spot(origin: Vector2, pos: Vector2) -> bool:
@@ -218,6 +231,8 @@ func _physics_process(delta: float) -> void:
 			e.grow = minf(1.0, e.grow + delta * grow_rate)
 		elif nodes[e.b].grow < 1.0:
 			nodes[e.b].grow = minf(1.0, nodes[e.b].grow + delta * 3.0)
+			if nodes[e.b].grow >= 1.0:
+				room_grown.emit(e.b, nodes[e.b].kind)
 		if e.notch_t > 0.0:
 			e.notch_t -= delta
 		if e.state == "warning":
@@ -249,7 +264,7 @@ func _start_closure() -> void:
 		return
 	var i: int = candidates[rng.randi_range(0, candidates.size() - 1)]
 	edges[i].state = "warning"
-	edges[i].warn_t = WARN_TIME
+	edges[i].warn_t = WARN_TIME * float(params.get("warn_mult", 1.0))
 	stem_warning.emit(i)
 
 
@@ -314,14 +329,15 @@ func use_secateur(pos: Vector2, night_sap: int) -> Dictionary:
 	if blocked >= 0:
 		return _notch_edge(blocked, night_sap)
 	# 2. Комната: срезать и забрать ресурс.
-	for n in nodes:
-		if n.harvested or n.grow < 1.0:
+	for i in nodes.size():
+		var n: Dictionary = nodes[i]
+		if n.harvested or n.grow < 1.0 or not (n.kind in ROOM_KINDS):
 			continue
-		if (n.kind == "sap" or n.kind == "nest") and pos.distance_to(n.pos) < n.radius + 16.0:
+		if pos.distance_to(n.pos) < n.radius + 16.0:
 			n.harvested = true
-			if n.kind == "sap":
-				return {"action": "harvest", "sap": 3, "text": "Комната срезана: сок +3"}
-			return {"action": "harvest", "sap": 1, "text": "Иммунный узел срезан: сок +1"}
+			var res := _harvest_result(n.kind)
+			res["index"] = i
+			return res
 	# 3. Побег, который вот-вот вырастет: подрезать и перенаправить рост.
 	for i in pending.size():
 		var p: Dictionary = pending[i]
@@ -338,6 +354,31 @@ func use_secateur(pos: Vector2, night_sap: int) -> Dictionary:
 	if open_edge >= 0:
 		return _notch_edge(open_edge, night_sap)
 	return {"action": "none"}
+
+
+func _harvest_result(kind: String) -> Dictionary:
+	var graft_sap := 2 if params.get("graft", "") == "sap" else 0
+	match kind:
+		"sap":
+			var n := 3 + int(params.get("sap_bonus", 0)) + graft_sap
+			return {"action": "harvest", "sap": n, "text": "Комната срезана: сок +%d" % n}
+		"nest":
+			return {"action": "harvest", "sap": 1 + graft_sap, "text": "Иммунный узел срезан: клетки больше не рождаются здесь"}
+		"flower":
+			return {"action": "harvest", "sap": 2 + graft_sap, "text": "Хищный цветок срезан: сок +%d" % (2 + graft_sap)}
+		"thorn":
+			return {"action": "harvest", "sap": 2 + graft_sap, "text": "Колючая камера срезана: сок +%d" % (2 + graft_sap)}
+		"seed":
+			var n := 1 + int(params.get("seed_bonus", 0))
+			return {"action": "harvest", "seeds": n, "sap": graft_sap, "text": "Семенная камера срезана: семена +%d" % n}
+		"water":
+			var n := 1 + int(params.get("water_bonus", 0))
+			return {"action": "harvest", "water": n, "sap": graft_sap, "text": "Водяной карман срезан: вода +%d" % n}
+	return {"action": "none"}
+
+
+func is_room_alive(i: int) -> bool:
+	return i >= 0 and i < nodes.size() and not nodes[i].harvested
 
 
 func _nearest_edge(pos: Vector2, max_d: float, only_blocked: bool) -> int:
@@ -468,6 +509,27 @@ func _draw_node(n: Dictionary, pulse: float) -> void:
 			for k in 5:
 				var off := Vector2.from_angle(k * TAU / 5.0 - _time * 0.8) * r * 0.45
 				draw_circle(pos + off, r * 0.12, C_NEST)
+		"flower":
+			# Цветок рисует night_scene (он живой и раскрывается); здесь — его ложе.
+			draw_circle(pos, r, C_STEM.darkened(0.25))
+			draw_circle(pos, r * 0.7, C_FLOWER.darkened(0.6))
+		"thorn":
+			draw_circle(pos, r, C_STEM.darkened(0.3))
+			draw_circle(pos, r * 0.75, C_THORN.darkened(0.3))
+			for k in 10:
+				var dir := Vector2.from_angle(k * TAU / 10.0)
+				draw_line(pos + dir * r * 0.35, pos + dir * r * 0.72, C_THORN.lightened(0.35), 3.0)
+		"seed":
+			draw_circle(pos, r, C_STEM)
+			draw_circle(pos, r * 0.7, C_SEED.darkened(0.45))
+			for k in 4:
+				var off := Vector2.from_angle(k * TAU / 4.0 + 0.4) * r * 0.32
+				draw_circle(pos + off, r * 0.14, C_SEED)
+		"water":
+			draw_circle(pos, r, C_STEM)
+			draw_circle(pos, r * 0.7, C_WATER.darkened(0.3))
+			var wob := sin(_time * 2.0) * 3.0
+			draw_arc(pos + Vector2(0, wob), r * 0.4, PI * 0.15, PI * 0.85, 12, C_WATER.lightened(0.4), 3.0)
 		_:
 			draw_circle(pos, r, C_BUD)
 			draw_circle(pos, r * 0.5, C_STEM_IN)

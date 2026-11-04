@@ -1,12 +1,13 @@
 extends SceneTree
 ## Дымовой тест: новая игра → ночь; бот идёт по графу к цели и пользуется секатором.
-## Запуск: godot --headless --path . -s tests/smoke_test.gd --fixed-fps 60 -- [seed] [watered]
+## Запуск: godot --headless --path . -s tests/smoke_test.gd --fixed-fps 60 -- [seed] [watered 0/1] [day]
 
 var main: Node
 var frames := 0
 var max_frames := 60 * 500
 var seed_value := 12345
 var watered := false
+var start_day := 1
 var path: Array = []
 var path_goal := Vector2.INF
 var replan_t := 0
@@ -21,6 +22,8 @@ func _initialize() -> void:
 		seed_value = int(args[0])
 	if args.size() > 1:
 		watered = args[1] == "1"
+	if args.size() > 2 and args[2].is_valid_int():
+		start_day = int(args[2])
 	verbose = "-v" in args
 	main = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
@@ -32,6 +35,8 @@ func _process(_delta: float) -> bool:
 	if frames == 5:
 		gs.new_game()
 		gs.run_seed = seed_value
+		gs.day = start_day
+		gs._new_day()
 		gs.watered = watered
 	if frames == 10:
 		gs.start_night()
@@ -63,7 +68,7 @@ func _process(_delta: float) -> bool:
 				if d < 150:
 					print("     e", i, " ", a, "->", b, " ", e.state, " grow=", e.grow, " d=", d)
 			print("     secateur would: ", g._nearest_edge(p.position + p.facing * 14.0, 42.0, true), " near=", g.edge_state_near(p.position))
-	if gs.day > 1:
+	if gs.day > start_day:
 		var used := 0.0
 		print("RESULT seed=%d watered=%s t=%ds: %s" % [seed_value, watered, frames / 60, gs.last_night_result])
 		return true
