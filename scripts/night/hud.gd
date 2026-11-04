@@ -5,6 +5,7 @@ const UI := preload("res://scripts/ui_kit.gd")
 
 signal resume_pressed
 signal menu_pressed
+signal choice_made(kind: String)
 
 var status: Label
 var objective: Label
@@ -13,6 +14,7 @@ var hint: Label
 var dawn: ColorRect
 var end_panel: Label
 var pause_box: Control
+var choice_box: Control
 
 var _msg_t := 0.0
 
@@ -69,6 +71,21 @@ func _ready() -> void:
 		b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		col.add_child(b)
 
+	choice_box = Control.new()
+	UI.fullscreen(choice_box)
+	choice_box.visible = false
+	root.add_child(choice_box)
+	var cc := UI.centered_column(choice_box, Color(0.08, 0.0, 0.02, 0.85))
+	cc.add_child(UI.label("Сердцевина", 44, Color(0.95, 0.45, 0.45)))
+	cc.add_child(UI.label("Оно бьётся под ладонью, тёплое, как живое. Секатор в другой руке.", 18, UI.PALE))
+	var c1 := UI.button("Срезать растение целиком", func(): choice_made.emit("cut"))
+	var c2 := UI.button("Привить его к себе полностью", func(): choice_made.emit("graft"))
+	for b in [c1, c2]:
+		b.custom_minimum_size = Vector2(420, 52)
+		b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		cc.add_child(b)
+	cc.add_child(UI.label("Вернуть комнату себе или стать с ним одним целым.", 15, UI.PALE.darkened(0.3)))
+
 
 func _corner_label(root: Control, x: float, y: float, align: int, size: int) -> Label:
 	var l := UI.label("", size, UI.PALE)
@@ -84,10 +101,11 @@ func _process(delta: float) -> void:
 	message.modulate.a = clampf(_msg_t, 0.0, 1.0)
 
 
-func set_status(night: int, time_left: float, sap: int, hp: int, max_hp: int) -> void:
+func set_status(night: int, time_left: float, sap: int, hp: int, max_hp: int, tier_name: String = "") -> void:
 	var t := maxi(0, int(ceil(time_left)))
-	status.text = "Ночь %d   ·   До рассвета %d:%02d   ·   Сок %d   ·   Здоровье %d/%d" % [
-		night, t / 60, t % 60, sap, hp, max_hp]
+	var title := "Ночь %d · %s" % [night, tier_name] if night <= GameState.TOTAL_NIGHTS else "Последняя ночь"
+	status.text = "%s   ·   До рассвета %d:%02d   ·   Сок %d   ·   Здоровье %d/%d" % [
+		title, t / 60, t % 60, sap, hp, max_hp]
 	# В последнюю минуту экран светлеет — рассвет близко.
 	dawn.color.a = clampf((60.0 - time_left) / 60.0, 0.0, 1.0) * 0.35
 
@@ -113,3 +131,7 @@ func show_end(text: String) -> void:
 
 func show_pause(on: bool) -> void:
 	pause_box.visible = on
+
+
+func show_choice() -> void:
+	choice_box.visible = true

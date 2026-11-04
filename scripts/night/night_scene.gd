@@ -48,6 +48,7 @@ func _ready() -> void:
 	graph.room_grown.connect(_on_room_grown)
 	enemies = Node2D.new()
 	graph.setup(params, GameState.night_seed())
+	RenderingServer.set_default_clear_color(graph.background)
 	graph.core_revealed.connect(func(_p): hud.flash("Сердцевина проросла! Узел ждёт."))
 
 	add_child(enemies)
@@ -83,11 +84,23 @@ func _ready() -> void:
 	var g: String = params.get("graft", "")
 	if g != "":
 		extras += " Привито: " + GRAFT_TEXT.get(g, "")
-	hud.flash("Ночь %d. Доберитесь до сердцевины и вернитесь до рассвета.%s" % [GameState.day, extras], 6.0)
+	hud.choice_made.connect(_on_choice)
+	var tier: Dictionary = GameState.TIERS[params.tier]
+	if params.final:
+		# В финал вы берёте с собой весь сок, накопленный за шесть дней.
+		sap_collected = GameState.sap
+		hud.flash("Последняя ночь. Путь к сердцевине зарос. Весь ваш сок (%d) с вами.%s" % [sap_collected, extras], 6.0)
+	else:
+		hud.flash("Ночь %d · %s. %s Доберитесь до сердцевины и вернитесь до рассвета.%s" % [
+			GameState.day, tier.name, tier.desc, extras], 7.0)
+
+
+func _exit_tree() -> void:
+	Engine.time_scale = 1.0
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("pause") and not ended:
+	if event.is_action_pressed("pause") and not ended and not hud.choice_box.visible:
 		_toggle_pause()
 		get_viewport().set_input_as_handled()
 
@@ -103,11 +116,17 @@ func _physics_process(delta: float) -> void:
 	time_left -= delta
 	_spawn_enemies(delta)
 	_thorns(delta)
+	_slow_motion(delta)
 
 	if not reached_core and graph.core_index >= 0:
 		var core: Vector2 = graph.node_pos(graph.core_index)
 		if player.position.distance_to(core) < graph.CORE_RADIUS * 0.8:
 			reached_core = true
+			if params.final:
+				Engine.time_scale = 1.0
+				get_tree().paused = true
+				hud.show_choice()
+				return
 			sap_collected += 2
 			seeds_collected += 1
 			hud.flash("Узел взят: сок +2, семя +1. Возвращайтесь к входу!", 4.0)
@@ -117,6 +136,11 @@ func _physics_process(delta: float) -> void:
 		return
 	if time_left <= 0.0:
 		_end(false, "Рассвет застал вас внутри.")
+		return
+	if params.final:
+		player.target = graph.node_pos(graph.core_index)
+		hud.set_objective("Цель: сердцевина")
+		hud.set_status(GameState.day, time_left, sap_collected, player.hp, player.max_hp, "Сердцевина")
 		return
 
 	# Цель и стрелка-подсказка
@@ -129,8 +153,21 @@ func _physics_process(delta: float) -> void:
 	else:
 		player.target = graph.node_pos(graph.leader)
 		hud.set_objective("Цель: следуйте за главным побегом (золотой пунктир)")
-	hud.set_status(GameState.day, time_left, sap_collected, player.hp, player.max_hp)
+	hud.set_status(GameState.day, time_left, sap_collected, player.hp, player.max_hp, GameState.TIERS[params.tier].name)
 	hud.set_loot(seeds_collected, water_collected)
+
+
+## Лёгкое замедление, когда рядом вот-вот что-то прорастёт или зарастёт: без паники.
+func _slow_motion(delta: float) -> void:
+	var target_scale := 0.75 if graph.danger_near(player.position, 110.0) else 1.0
+	Engine.time_scale = move_toward(Engine.time_scale, target_scale, delta * 3.0)
+
+
+func _on_choice(kind: String) -> void:
+	get_tree().paused = false
+	ended = true
+	GameState.choose_ending(kind)
+	GameState.goto("ending")
 
 
 func _apply_graft() -> void:
@@ -232,6 +269,10 @@ func _end(success: bool, text: String) -> void:
 		e.set_physics_process(false)
 	var detail := "Сок +%d, семена +%d, вода +%d" % [sap_collected, seeds_collected, water_collected] if success else "Добыча ночи потеряна"
 	hud.show_end("%s\n%s" % [text, detail])
+	Engine.time_scale = 1.0
 	await get_tree().create_timer(2.5).timeout
-	GameState.finish_night(success, {"sap": sap_collected, "seeds": seeds_collected, "water": water_collected}, text)
+	if params.final:
+		GameState.retry_final(text)
+	else:
+		GameState.finish_night(success, {"sap": sap_collected, "seeds": seeds_collected, "water": water_collected}, text)
 	GameState.goto(GameState.phase)

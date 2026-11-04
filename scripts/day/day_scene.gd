@@ -55,8 +55,16 @@ func _ready() -> void:
 	col.add_theme_constant_override("separation", 8)
 	scroll.add_child(col)
 
-	col.add_child(_left(UI.label("День %d из %d" % [GameState.day, GameState.TOTAL_NIGHTS], 30, UI.INK)))
-	col.add_child(_left(UI.label("Ресурсов не хватит на всё. Выберите ветвь на растении.", 14, UI.INK.lightened(0.3))))
+	var title := "День %d из %d" % [GameState.day, GameState.TOTAL_NIGHTS]
+	var sub := "Ресурсов не хватит на всё. Выберите ветвь на растении."
+	if GameState.is_final():
+		title = "Последний день"
+		sub = "Растение заняло всю комнату. Этой ночью вы дойдёте до сердцевины и решите, чем всё кончится."
+	else:
+		var tn: Dictionary = GameState.TIERS[GameState.tier()]
+		sub = "Этой ночью: %s. %s %s" % [tn.name.to_lower(), tn.desc, sub]
+	col.add_child(_left(UI.label(title, 30, UI.INK)))
+	col.add_child(_left(UI.label(sub, 14, UI.INK.lightened(0.3))))
 	result = _left(UI.label(GameState.last_night_result, 14, UI.INK.lightened(0.25)))
 	result.visible = GameState.last_night_result != ""
 	col.add_child(result)

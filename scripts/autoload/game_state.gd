@@ -5,10 +5,23 @@ signal scene_requested(scene_name: String)
 
 const SAVE_PATH := "user://save.json"
 const TOTAL_NIGHTS := 6
+const FINAL_DAY := TOTAL_NIGHTS + 1   # последний день и ночь сердцевины
+
+## Ярусы растения: каждые две ночи вы спускаетесь глубже (или поднимаетесь выше).
+const TIERS := {
+	"soil": {"name": "Почва", "desc": "Корни, сырость и иммунные узлы."},
+	"bark": {"name": "Кора", "desc": "Жёсткие стебли, которые зарастают быстрее."},
+	"crown": {"name": "Крона", "desc": "Буйный рост и хищные цветы."},
+	"heart": {"name": "Сердцевина", "desc": "Само растение. Дорога одна."},
+}
 
 var run_seed: int = 0
 var day: int = 1
 var phase: String = "day"  # "day" | "night" | "ending"
+var ending: String = ""     # "cut" | "graft" — выбор у сердцевины
+var nights_won: int = 0
+var started_msec: int = 0
+var play_seconds: float = 0.0
 
 # Ресурсы дня
 var water: int = 3
@@ -140,6 +153,9 @@ func new_game() -> void:
 	fertilized = false
 	last_night_result = ""
 	grudge = 0
+	ending = ""
+	nights_won = 0
+	play_seconds = 0.0
 	_new_day()
 	save_game()
 	goto("day")
@@ -223,6 +239,27 @@ func count_branches(t: String, states: Array) -> int:
 	return n
 
 
+# --- Ярусы ----------------------------------------------------------------------
+
+func is_final() -> bool:
+	return day >= FINAL_DAY
+
+
+func tier() -> String:
+	if day >= FINAL_DAY:
+		return "heart"
+	if day <= 2:
+		return "soil"
+	if day <= 4:
+		return "bark"
+	return "crown"
+
+
+func _process(delta: float) -> void:
+	if phase == "day" or phase == "night":
+		play_seconds += delta
+
+
 # --- Параметры ночи ------------------------------------------------------------
 
 func night_seed() -> int:
@@ -231,11 +268,13 @@ func night_seed() -> int:
 
 ## Всё, что сделано днём, превращается здесь в параметры ночного забега.
 func night_params() -> Dictionary:
-	var d := day
+	var d := mini(day, TOTAL_NIGHTS)
 	var p := {
+		"tier": tier(),
+		"final": is_final(),
 		"duration": 360.0 + (d - 1) * 24.0,   # 6–8 минут реального времени
-		"core_distance": 2200.0 + d * 250.0,
-		"leader_ticks": 18,                   # главный побег растёт раз в 9 с
+		"core_distance": 2000.0 + d * 220.0,
+		"core_at": 0.55,                      # сердцевина прорастает к этой доле ночи
 		"branch_chance": 0.30 + 0.04 * d,
 		"growth_mult": 1.0,
 		"closure_base": 0.015 + 0.006 * d,
@@ -266,16 +305,43 @@ func night_params() -> Dictionary:
 	p.water_room_chance = 0.02 + 0.05 * water_b
 	p.water_bonus = 1 if count_branches("water", ["notched"]) > 0 else 0
 	p.graft = graft
+	match p.tier:
+		"soil":
+			p.nest_chance += 0.03
+			p.closure_growth = 0.035
+		"bark":
+			p.closure_base += 0.01
+			p.thorn_room_chance += 0.03
+		"crown":
+			p.branch_chance += 0.1
+			p.flower_chance += 0.04
+		"heart":
+			# Финал: сердцевина уже видна, но растение защищается изо всех сил.
+			p.duration = 300.0
+			p.core_distance = 5200.0
+			p.core_at = 0.0
+			p.closure_base = 0.06
+			p.closure_growth = 0.06
+			p.flower_chance = 0.08
+			p.nest_chance = 0.12
+			p.max_enemies = 6
+			p.spawn_interval = 6.0
 	if watered:
 		# Полили — растение растёт быстрее и агрессивнее.
 		p.branch_chance += 0.2
 		p.growth_mult = 1.4
-		p.leader_ticks = 13
+		p.core_at = 0.45
 		p.closure_base += 0.015
 		p.max_enemies += 1
 	if fertilized:
 		# Удобрили — больше комнат с ресурсами.
 		p.sap_room_chance += 0.15
+	# Потолки, чтобы растение оставалось проходимым при любом наборе ветвей.
+	p.flower_chance = minf(p.flower_chance, 0.12)
+	p.nest_chance = minf(p.nest_chance, 0.16)
+	p.thorn_room_chance = minf(p.thorn_room_chance, 0.10)
+	p.branch_chance = minf(p.branch_chance, 0.55)
+	p.max_enemies = mini(p.max_enemies, 7)
 	return p
 
 
@@ -285,6 +351,7 @@ func finish_night(success: bool, loot: Dictionary, reason: String = "") -> void:
 	var gained_seeds := int(loot.get("seeds", 0))
 	var gained_water := int(loot.get("water", 0))
 	if success:
+		nights_won += 1
 		sap += gained_sap
 		seeds += gained_seeds
 		water += gained_water
@@ -297,9 +364,24 @@ func finish_night(success: bool, loot: Dictionary, reason: String = "") -> void:
 		last_night_result = "%s Добыча ночи потеряна%s." % [reason if reason != "" else "Рассвет застал вас внутри.", lost]
 	day += 1
 	water = mini(water + 1, 6)
-	phase = "ending" if day > TOTAL_NIGHTS else "day"
-	if phase == "day":
-		_new_day()
+	phase = "day"
+	_new_day()
+	save_game()
+
+
+## Финальная ночь не удалась: утро последнего дня наступает снова.
+func retry_final(reason: String) -> void:
+	# Растение роняет немного сока, чтобы финал всегда оставался проходимым.
+	sap += 2
+	last_night_result = reason + " Сердцевина ждёт. Утром вы нашли на полу 2 сока. Попробуйте ещё раз."
+	phase = "day"
+	_new_day()
+	save_game()
+
+
+func choose_ending(kind: String) -> void:
+	ending = kind
+	phase = "ending"
 	save_game()
 
 
@@ -324,7 +406,7 @@ func has_save() -> bool:
 
 func to_dict() -> Dictionary:
 	return {
-		"version": 2,
+		"version": 3,
 		"run_seed": run_seed,
 		"day": day,
 		"phase": phase,
@@ -339,6 +421,9 @@ func to_dict() -> Dictionary:
 		"prunes_left": prunes_left,
 		"graft": graft,
 		"grudge": grudge,
+		"ending": ending,
+		"nights_won": nights_won,
+		"play_seconds": play_seconds,
 	}
 
 
@@ -360,6 +445,9 @@ func from_dict(d: Dictionary) -> void:
 	prunes_left = int(d.get("prunes_left", PRUNES_PER_DAY))
 	graft = str(d.get("graft", ""))
 	grudge = int(d.get("grudge", 0))
+	ending = str(d.get("ending", ""))
+	nights_won = int(d.get("nights_won", 0))
+	play_seconds = float(d.get("play_seconds", 0.0))
 	if branches.is_empty() and phase == "day":
 		_new_day()
 
