@@ -10,6 +10,8 @@ const CHASE_RANGE := 420.0
 var graph: Node2D
 var player: Node2D
 var hp := 2
+var speed_mult := 1.0
+var thorny_player := false  # прививка «Шипы»
 
 var _knock := Vector2.ZERO
 var _flash := 0.0
@@ -35,12 +37,14 @@ func _physics_process(delta: float) -> void:
 		if position.distance_to(_wander) < 24.0 or randf() < 0.004:
 			_wander = graph.random_node_pos()
 		dir = (_wander - position).normalized()
-	var desired := position + dir * SPEED * delta + _knock * delta
+	var desired := position + dir * SPEED * speed_mult * delta + _knock * delta
 	_knock = _knock.move_toward(Vector2.ZERO, 1000.0 * delta)
 	position = graph.constrain(desired, RADIUS * 0.6)
 	if to_player.length() < RADIUS + 12.0 and _hit_cd <= 0.0:
 		_hit_cd = 0.8
 		player.take_damage(1, position)
+		if thorny_player:
+			take_hit(-to_player.normalized())
 	queue_redraw()
 
 

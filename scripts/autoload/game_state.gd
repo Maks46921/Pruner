@@ -22,6 +22,61 @@ var fertilized: bool = false
 
 var last_night_result: String = ""
 
+# Ветви, видимые днём. Каждая ветвь — то, что вы встретите ночью.
+# {"type": String, "state": "grown" | "pruned" | "notched" | "grafted"}
+var branches: Array = []
+var prunes_left: int = 2
+var graft: String = ""      # тип ветви, привитой на эту ночь
+var grudge: int = 0         # сколько раз растение надрезали: оно помнит
+
+const PRUNES_PER_DAY := 2
+const NOTCH_COST := 2
+
+const BRANCH_INFO := {
+	"predator": {
+		"name": "Хищный побег",
+		"night": "раскроются хищные цветы, которые кусают тех, кто подходит близко.",
+		"notch": "цветы раскрываются медленнее и кусают ближе.",
+		"graft": "Шипы", "graft_desc": "иммунные клетки ранятся, касаясь вас.",
+		"color": Color(0.82, 0.25, 0.35),
+	},
+	"immune": {
+		"name": "Бледная ветвь",
+		"night": "больше иммунных узлов и клеток.",
+		"notch": "иммунные клетки медленнее.",
+		"graft": "Хлыст", "graft_desc": "удар бьёт почти вдвое дальше.",
+		"color": Color(0.65, 0.72, 0.92),
+	},
+	"sap": {
+		"name": "Сочная ветвь",
+		"night": "больше комнат с соком.",
+		"notch": "каждая комната с соком даёт на 1 больше.",
+		"graft": "Сокосбор", "graft_desc": "каждая срезанная комната даёт +2 сока.",
+		"color": Color(0.95, 0.62, 0.15),
+	},
+	"thorn": {
+		"name": "Колючая ветвь",
+		"night": "стебли зарастают чаще, появляются колючие камеры.",
+		"notch": "стебли предупреждают о зарастании вдвое дольше.",
+		"graft": "Кора", "graft_desc": "+2 к здоровью на ночь.",
+		"color": Color(0.45, 0.30, 0.20),
+	},
+	"seed": {
+		"name": "Семенная ветвь",
+		"night": "появятся семенные камеры, семена можно посадить днём.",
+		"notch": "семенные камеры дают по 2 семени.",
+		"graft": "Ночное зрение", "graft_desc": "вы видите растение шире.",
+		"color": Color(0.85, 0.80, 0.45),
+	},
+	"water": {
+		"name": "Водяная ветвь",
+		"night": "появятся водяные карманы, это вода на следующий день.",
+		"notch": "водяные карманы дают по 2 воды.",
+		"graft": "Лёгкий шаг", "graft_desc": "вы двигаетесь на 20% быстрее.",
+		"color": Color(0.35, 0.65, 0.90),
+	},
+}
+
 
 func _ready() -> void:
 	_setup_input()
@@ -84,8 +139,88 @@ func new_game() -> void:
 	watered = false
 	fertilized = false
 	last_night_result = ""
+	grudge = 0
+	_new_day()
 	save_game()
 	goto("day")
+
+
+## Утро: растение отрастило новые ветви, секатор снова наточен.
+func _new_day() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(str(run_seed) + ":branches:" + str(day))
+	var pool := ["predator", "immune", "sap", "thorn", "seed", "water"]
+	var count := 3 + mini(day, 3)
+	branches.clear()
+	# С первой ночи растение показывает и пользу, и угрозу.
+	var must := ["sap", "immune"] if day == 1 else ["predator", "thorn"]
+	for t in must:
+		branches.append({"type": t, "state": "grown"})
+	while branches.size() < count:
+		branches.append({"type": pool[rng.randi_range(0, pool.size() - 1)], "state": "grown"})
+	# Перемешать, чтобы порядок ветвей не подсказывал тип.
+	for i in range(branches.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp = branches[i]
+		branches[i] = branches[j]
+		branches[j] = tmp
+	prunes_left = PRUNES_PER_DAY
+	graft = ""
+	watered = false
+	fertilized = false
+
+
+# --- Действия дня -------------------------------------------------------------
+
+func can_prune(i: int) -> bool:
+	return prunes_left > 0 and branches[i].state in ["grown", "notched"]
+
+
+func prune(i: int) -> void:
+	if not can_prune(i):
+		return
+	branches[i].state = "pruned"
+	prunes_left -= 1
+	sap += 1
+	save_game()
+
+
+func can_notch(i: int) -> bool:
+	return sap >= NOTCH_COST and branches[i].state == "grown"
+
+
+func notch(i: int) -> void:
+	if not can_notch(i):
+		return
+	branches[i].state = "notched"
+	sap -= NOTCH_COST
+	grudge += 1
+	save_game()
+
+
+## Привить срезанную ветвь к себе: способность на ближайшую ночь.
+func graft_branch(i: int) -> void:
+	if branches[i].state != "pruned" or graft != "":
+		return
+	branches[i].state = "grafted"
+	graft = branches[i].type
+	save_game()
+
+
+func plant_seed() -> void:
+	if seeds <= 0:
+		return
+	seeds -= 1
+	fertilizer += 1
+	save_game()
+
+
+func count_branches(t: String, states: Array) -> int:
+	var n := 0
+	for b in branches:
+		if b.type == t and b.state in states:
+			n += 1
+	return n
 
 
 # --- Параметры ночи ------------------------------------------------------------
@@ -106,11 +241,31 @@ func night_params() -> Dictionary:
 		"closure_base": 0.015 + 0.006 * d,
 		"closure_growth": 0.05,
 		"initial_branches": 10 + 2 * d,
-		"sap_room_chance": 0.12,
-		"nest_chance": 0.07 + 0.015 * d,
-		"max_enemies": 2 + d,
 		"spawn_interval": max(6.0, 15.0 - d),
 	}
+	# Ветви дня: живая ветвь добавляет своё в ночь, срезанная — убирает, надрезанная — ослабляет.
+	var live := ["grown", "notched"]
+	var predators := count_branches("predator", live)
+	var immune := count_branches("immune", live)
+	var saps := count_branches("sap", live)
+	var thorns := count_branches("thorn", live)
+	var seed_b := count_branches("seed", live)
+	var water_b := count_branches("water", live)
+	p.flower_chance = 0.07 * predators
+	p.flower_weak = count_branches("predator", ["notched"]) > 0
+	p.nest_chance = 0.03 + 0.05 * immune + 0.01 * d
+	p.max_enemies = 1 + d / 2 + immune
+	p.enemy_speed_mult = 0.75 if count_branches("immune", ["notched"]) > 0 else 1.0
+	p.sap_room_chance = 0.05 + 0.08 * saps
+	p.sap_bonus = 1 if count_branches("sap", ["notched"]) > 0 else 0
+	p.thorn_room_chance = 0.05 * thorns
+	p.closure_base += 0.01 * thorns + 0.004 * grudge
+	p.warn_mult = 2.0 if count_branches("thorn", ["notched"]) > 0 else 1.0
+	p.seed_room_chance = 0.02 + 0.05 * seed_b
+	p.seed_bonus = 1 if count_branches("seed", ["notched"]) > 0 else 0
+	p.water_room_chance = 0.02 + 0.05 * water_b
+	p.water_bonus = 1 if count_branches("water", ["notched"]) > 0 else 0
+	p.graft = graft
 	if watered:
 		# Полили — растение растёт быстрее и агрессивнее.
 		p.branch_chance += 0.2
@@ -124,20 +279,27 @@ func night_params() -> Dictionary:
 	return p
 
 
-## Итог ночи. Возвращает текст для утреннего экрана.
-func finish_night(success: bool, sap_gained: int, seeds_gained: int, reason: String = "") -> void:
+## Итог ночи. loot: {"sap", "seeds", "water"}.
+func finish_night(success: bool, loot: Dictionary, reason: String = "") -> void:
+	var gained_sap := int(loot.get("sap", 0))
+	var gained_seeds := int(loot.get("seeds", 0))
+	var gained_water := int(loot.get("water", 0))
 	if success:
-		sap += sap_gained
-		seeds += seeds_gained
-		last_night_result = "%s Сок +%d, семена +%d." % [reason if reason != "" else "Вы вернулись до рассвета.", sap_gained, seeds_gained]
+		sap += gained_sap
+		seeds += gained_seeds
+		water += gained_water
+		var parts := ["сок +%d" % gained_sap, "семена +%d" % gained_seeds]
+		if gained_water > 0:
+			parts.append("вода +%d" % gained_water)
+		last_night_result = "%s Добыча: %s." % [reason if reason != "" else "Вы вернулись до рассвета.", ", ".join(parts)]
 	else:
 		var lost := _lose_one_resource()
 		last_night_result = "%s Добыча ночи потеряна%s." % [reason if reason != "" else "Рассвет застал вас внутри.", lost]
 	day += 1
-	water = min(water + 1, 6)
-	watered = false
-	fertilized = false
+	water = mini(water + 1, 6)
 	phase = "ending" if day > TOTAL_NIGHTS else "day"
+	if phase == "day":
+		_new_day()
 	save_game()
 
 
@@ -162,7 +324,7 @@ func has_save() -> bool:
 
 func to_dict() -> Dictionary:
 	return {
-		"version": 1,
+		"version": 2,
 		"run_seed": run_seed,
 		"day": day,
 		"phase": phase,
@@ -173,6 +335,10 @@ func to_dict() -> Dictionary:
 		"watered": watered,
 		"fertilized": fertilized,
 		"last_night_result": last_night_result,
+		"branches": branches,
+		"prunes_left": prunes_left,
+		"graft": graft,
+		"grudge": grudge,
 	}
 
 
@@ -187,6 +353,15 @@ func from_dict(d: Dictionary) -> void:
 	watered = bool(d.get("watered", false))
 	fertilized = bool(d.get("fertilized", false))
 	last_night_result = str(d.get("last_night_result", ""))
+	branches = []
+	for b in d.get("branches", []):
+		if typeof(b) == TYPE_DICTIONARY:
+			branches.append({"type": str(b.get("type", "sap")), "state": str(b.get("state", "grown"))})
+	prunes_left = int(d.get("prunes_left", PRUNES_PER_DAY))
+	graft = str(d.get("graft", ""))
+	grudge = int(d.get("grudge", 0))
+	if branches.is_empty() and phase == "day":
+		_new_day()
 
 
 func save_game() -> void:

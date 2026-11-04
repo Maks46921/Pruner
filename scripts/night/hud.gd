@@ -92,6 +92,11 @@ func set_status(night: int, time_left: float, sap: int, hp: int, max_hp: int) ->
 	dawn.color.a = clampf((60.0 - time_left) / 60.0, 0.0, 1.0) * 0.35
 
 
+func set_loot(seeds: int, water: int) -> void:
+	if seeds > 0 or water > 0:
+		status.text += "   ·   Семена %d   ·   Вода %d" % [seeds, water]
+
+
 func set_objective(text: String) -> void:
 	objective.text = text
 

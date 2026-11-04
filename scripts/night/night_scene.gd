@@ -6,6 +6,17 @@ const PlantGraph := preload("res://scripts/night/plant_graph.gd")
 const Player := preload("res://scripts/night/player.gd")
 const ImmuneCell := preload("res://scripts/night/immune_cell.gd")
 const Hud := preload("res://scripts/night/hud.gd")
+const PredatorFlower := preload("res://scripts/night/predator_flower.gd")
+
+const THORN_PERIOD := 2.0
+const GRAFT_TEXT := {
+	"predator": "Шипы: клетки ранятся о вас.",
+	"immune": "Хлыст: удар бьёт дальше.",
+	"sap": "Сокосбор: комнаты дают больше сока.",
+	"thorn": "Кора: +2 к здоровью.",
+	"seed": "Ночное зрение: вы видите шире.",
+	"water": "Лёгкий шаг: вы быстрее.",
+}
 
 const ATTACK_RANGE := 54.0
 const ATTACK_ARC := 1.2  # радиан в каждую сторону
@@ -19,6 +30,9 @@ var params: Dictionary
 var time_left := 0.0
 var sap_collected := 0
 var seeds_collected := 0
+var water_collected := 0
+var attack_range := ATTACK_RANGE
+var _thorn_t := 0.0
 var reached_core := false
 var ended := false
 var _spawn_acc := 0.0
@@ -31,15 +45,17 @@ func _ready() -> void:
 
 	graph = PlantGraph.new()
 	add_child(graph)
+	graph.room_grown.connect(_on_room_grown)
+	enemies = Node2D.new()
 	graph.setup(params, GameState.night_seed())
 	graph.core_revealed.connect(func(_p): hud.flash("Сердцевина проросла! Узел ждёт."))
 
-	enemies = Node2D.new()
 	add_child(enemies)
 
 	player = Player.new()
 	player.graph = graph
 	player.night = self
+	_apply_graft()
 	player.died.connect(func(): _end(false, "Растение вытолкнуло вас наружу."))
 	add_child(player)
 
@@ -48,6 +64,12 @@ func _ready() -> void:
 	cam.position_smoothing_speed = 6.0
 	player.add_child(cam)
 	cam.make_current()
+	if params.get("graft", "") == "seed":
+		cam.zoom = Vector2(0.72, 0.72)
+	# Цветы, которые уже стоят к началу ночи
+	for i in graph.nodes.size():
+		if graph.nodes[i].kind == "flower" and graph.nodes[i].grow >= 1.0:
+			_on_room_grown(i, "flower")
 
 	hud = Hud.new()
 	hud.resume_pressed.connect(_toggle_pause)
@@ -58,6 +80,9 @@ func _ready() -> void:
 		extras += " Растение полито: оно растёт быстрее и злее."
 	if GameState.fertilized:
 		extras += " Удобрено: больше комнат с соком."
+	var g: String = params.get("graft", "")
+	if g != "":
+		extras += " Привито: " + GRAFT_TEXT.get(g, "")
 	hud.flash("Ночь %d. Доберитесь до сердцевины и вернитесь до рассвета.%s" % [GameState.day, extras], 6.0)
 
 
@@ -77,6 +102,7 @@ func _physics_process(delta: float) -> void:
 		return
 	time_left -= delta
 	_spawn_enemies(delta)
+	_thorns(delta)
 
 	if not reached_core and graph.core_index >= 0:
 		var core: Vector2 = graph.node_pos(graph.core_index)
@@ -104,6 +130,44 @@ func _physics_process(delta: float) -> void:
 		player.target = graph.node_pos(graph.leader)
 		hud.set_objective("Цель: следуйте за главным побегом (золотой пунктир)")
 	hud.set_status(GameState.day, time_left, sap_collected, player.hp, player.max_hp)
+	hud.set_loot(seeds_collected, water_collected)
+
+
+func _apply_graft() -> void:
+	match params.get("graft", ""):
+		"thorn":
+			player.max_hp += 2
+			player.hp = player.max_hp
+		"water":
+			player.speed_mult = 1.2
+		"immune":
+			attack_range = ATTACK_RANGE * 1.8
+			player.swing_radius = 46.0 * 1.8
+
+
+func _on_room_grown(index: int, kind: String) -> void:
+	if kind != "flower" or player == null:
+		return
+	var f := PredatorFlower.new()
+	f.graph = graph
+	f.player = player
+	f.room_index = index
+	f.weak = bool(params.get("flower_weak", false))
+	f.position = graph.node_pos(index)
+	enemies.add_child(f)
+
+
+## Колючие камеры колют каждые 2 с, пока вы внутри.
+func _thorns(delta: float) -> void:
+	_thorn_t -= delta
+	if _thorn_t > 0.0:
+		return
+	_thorn_t = THORN_PERIOD
+	for n in graph.nodes:
+		if n.kind == "thorn" and not n.harvested and n.grow >= 1.0:
+			if player.position.distance_to(n.pos) < n.radius:
+				player.take_damage(1, n.pos)
+				hud.flash("Колючая камера! Срежьте её секатором или уходите.", 2.0)
 
 
 func _spawn_enemies(delta: float) -> void:
@@ -111,7 +175,11 @@ func _spawn_enemies(delta: float) -> void:
 	if _spawn_acc < float(params.spawn_interval):
 		return
 	_spawn_acc = 0.0
-	if enemies.get_child_count() >= int(params.max_enemies):
+	var cells := 0
+	for e in enemies.get_children():
+		if e.has_signal("killed"):
+			cells += 1
+	if cells >= int(params.max_enemies):
 		return
 	var pos: Vector2 = graph.random_node_pos("nest")
 	if pos == graph.node_pos(graph.entry_index):
@@ -122,6 +190,8 @@ func _spawn_enemies(delta: float) -> void:
 	cell.graph = graph
 	cell.player = player
 	cell.position = pos
+	cell.speed_mult = float(params.get("enemy_speed_mult", 1.0))
+	cell.thorny_player = params.get("graft", "") == "predator"
 	cell.killed.connect(_on_cell_killed)
 	enemies.add_child(cell)
 
@@ -135,7 +205,8 @@ func _on_cell_killed(_pos: Vector2) -> void:
 func player_attack(pos: Vector2, facing: Vector2) -> void:
 	for e in enemies.get_children():
 		var to: Vector2 = e.position - pos
-		if to.length() <= ATTACK_RANGE and absf(facing.angle_to(to)) <= ATTACK_ARC:
+		var reach := attack_range + (30.0 if not e.has_signal("killed") else 0.0)
+		if to.length() <= reach and absf(facing.angle_to(to)) <= ATTACK_ARC:
 			e.take_hit(to.normalized())
 
 
@@ -144,6 +215,8 @@ func player_prune(pos: Vector2) -> void:
 	if res.action == "none":
 		return
 	sap_collected = maxi(0, sap_collected + int(res.get("sap", 0)))
+	seeds_collected += int(res.get("seeds", 0))
+	water_collected += int(res.get("water", 0))
 	if res.has("hp"):
 		player.take_damage(-int(res.hp), pos + Vector2(0, 1))
 	hud.flash(res.text, 2.0)
@@ -157,8 +230,8 @@ func _end(success: bool, text: String) -> void:
 	graph.set_physics_process(false)
 	for e in enemies.get_children():
 		e.set_physics_process(false)
-	var detail := "Сок +%d, семена +%d" % [sap_collected, seeds_collected] if success else "Добыча ночи потеряна"
+	var detail := "Сок +%d, семена +%d, вода +%d" % [sap_collected, seeds_collected, water_collected] if success else "Добыча ночи потеряна"
 	hud.show_end("%s\n%s" % [text, detail])
 	await get_tree().create_timer(2.5).timeout
-	GameState.finish_night(success, sap_collected, seeds_collected, text)
+	GameState.finish_night(success, {"sap": sap_collected, "seeds": seeds_collected, "water": water_collected}, text)
 	GameState.goto(GameState.phase)
