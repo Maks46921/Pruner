@@ -24,6 +24,7 @@ func _ready() -> void:
 	var kind: String = GameState.ending if TEXTS.has(GameState.ending) else "cut"
 	var t: Dictionary = TEXTS[kind]
 	RenderingServer.set_default_clear_color(t.bg)
+	Audio.play_music("final" if kind == "graft" else "day")
 	var col := UI.centered_column(self, t.bg)
 	col.custom_minimum_size = Vector2(720, 0)
 	col.add_child(UI.label(t.title, 56, t.color))

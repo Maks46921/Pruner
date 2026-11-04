@@ -41,6 +41,8 @@ func _physics_process(delta: float) -> void:
 			if _t <= 0.0:
 				_state = "bite"
 				_t = 0.25
+				if d < 600.0:
+					Audio.play_sfx("bite")
 				if d < _bite_range():
 					player.take_damage(1, position)
 		"bite":

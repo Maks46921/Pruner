@@ -8,6 +8,7 @@ extends Node2D
 signal core_revealed(pos: Vector2)
 signal stem_warning(edge_index: int)
 signal room_grown(index: int, kind: String)
+signal sprouted(pos: Vector2)
 
 ## Шесть типов комнат ночи (плюс вход и сердцевина).
 const ROOM_KINDS := ["sap", "nest", "flower", "thorn", "seed", "water"]
@@ -257,6 +258,7 @@ func _physics_process(delta: float) -> void:
 		if p.t <= 0.0:
 			pending.remove_at(i)
 			var idx := _connect(p.from, p.to, p.kind, false)
+			sprouted.emit(p.to)
 			if p.leader:
 				_leader_pending = false
 				leader = idx
